@@ -5,19 +5,26 @@ export const searchPaginator = (defaultOptions: PaginatorTypes.SearchPaginateOpt
     let data: T & { row_count: number }[];
 
     if (options?.searchValue) {
-      data = await prisma.$queryRawUnsafe(`
+      const { searchValue, searchColumns } = options; // Desestruturar parâmetros
+      const whereClause = searchColumns.map((column) => `coalesce(:${column}, '')`).join(' || ');
+      const countQuery = `
+        SELECT COUNT(*) FROM "${modelName}"
+        WHERE to_tsvector('english', ${whereClause}) @@ to_tsquery('english', :searchValue)
+      `;
+      
+      const data = await prisma.$executeRawUnsafe<T & { row_count: number }[]>(`
         SELECT *,
-        (SELECT COUNT(*) FROM "${modelName}"
-          WHERE to_tsvector('english',
-          ${options.searchColumns.map((c: string) => `coalesce("${c}", '')`).join(" || ' ' || \n")}
-          ) @@ to_tsquery('english', '${options.searchValue}')) AS row_count
+          (${countQuery}) AS row_count
         FROM "${modelName}"
-        WHERE to_tsvector('english',
-          ${options.searchColumns.map((c: string) => `coalesce("${c}", '')`).join(" || ' ' || \n")}
-          ) @@ to_tsquery('english', '${options.searchValue}')
-          limit ${options.perPage}
-          offset ${options.skip};
-      `);
+        WHERE to_tsvector('english', ${whereClause}) @@ to_tsquery('english', :searchValue)
+        LIMIT :perPage
+        OFFSET :skip
+      `, {
+        searchValue,
+        searchColumns,
+        perPage: options?.perPage || defaultOptions.perPage,
+        skip: options?.skip || 0,
+      });
     } else {
       data = await prisma.$queryRawUnsafe(`
          SELECT *,
